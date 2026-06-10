@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 market_report.py)",
+      "Bash(python3 *)",
+      "Bash(pip install *)",
+      "Bash(date *)",
+      "Bash(cat /tmp/market-report-*.md)"
+    ]
+  }
+}
