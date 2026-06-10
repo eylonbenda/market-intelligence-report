@@ -28,7 +28,7 @@ TAVILY_KEY  = os.environ.get("TAVILY_API_KEY", "tvly-dev-23H9rG-Dhb4nOj9GnZWc2jD
 NTFY_TOPIC  = os.environ.get("NTFY_TOPIC", "market-report-eylon")
 RESEND_KEY  = os.environ.get("RESEND_API_KEY", "")
 EMAIL_TO    = os.environ.get("REPORT_EMAIL", "eylonbd6@gmail.com")
-EMAIL_FROM  = os.environ.get("REPORT_EMAIL_FROM", "market@resend.dev")  # use your verified domain once set up
+EMAIL_FROM  = os.environ.get("REPORT_EMAIL_FROM", "onboarding@resend.dev")  # use your verified domain once set up
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -91,6 +91,7 @@ def send_email(subject: str, html_body: str) -> bool:
         headers={
             "Content-Type": "application/json",
             "Authorization": f"Bearer {RESEND_KEY}",
+            "User-Agent": "Mozilla/5.0 (compatible; market-report/1.0)",
         },
     )
     try:
