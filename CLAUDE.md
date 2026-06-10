@@ -16,8 +16,9 @@ Runs a daily Hebrew market intelligence report covering:
 Recommended flow (fully Hebrew report):
 
 ```bash
-python3 market_report.py collect   # runs 12 Tavily searches, saves raw JSON to /tmp/market-data-YYYY-MM-DD.json
-# Claude reads the JSON and writes a fluent Hebrew report to /tmp/market-report-YYYY-MM-DD.md
+python3 market_report.py collect   # runs 12 Tavily searches, saves answers + full article content to /tmp/market-data-YYYY-MM-DD.json
+# Claude reads the JSON, runs follow-up searches on the biggest stories, and writes a detailed Hebrew report to /tmp/market-report-YYYY-MM-DD.md
+python3 market_report.py search "follow-up query"                # ad-hoc deep search, prints full results
 python3 market_report.py send /tmp/market-report-YYYY-MM-DD.md   # ntfy push (plain-text Top 5) + HTML email
 ```
 
@@ -54,14 +55,29 @@ In Claude Code on the web:
    ```
    Run the daily market intelligence report:
    1. Run: python3 market_report.py collect
-      (saves raw search data to /tmp/market-data-YYYY-MM-DD.json)
-   2. Read the JSON and write the full report ENTIRELY IN HEBREW —
-      translate all English search answers into fluent, natural Hebrew,
-      no English sentences in the body. Save it to
-      /tmp/market-report-YYYY-MM-DD.md using the same section structure
-      as build_report() in market_report.py. Keep it readable: short
-      paragraphs, bullet points, numbers with % and currency.
-   3. Run: python3 market_report.py send /tmp/market-report-YYYY-MM-DD.md
+      (saves raw search data — answers + full article content — to
+      /tmp/market-data-YYYY-MM-DD.json)
+   2. Read the JSON. For the 3–5 biggest / most market-moving stories,
+      run follow-up searches to get depth and exact numbers:
+      python3 market_report.py search "<focused follow-up query>"
+      (e.g. a specific earnings beat, a Fed comment, an Israel-Iran
+      development, a big analyst call). Use as many follow-ups as needed.
+   3. Write the full report ENTIRELY IN HEBREW — translate everything
+      into fluent, natural Hebrew, no English sentences in the body.
+      Save it to /tmp/market-report-YYYY-MM-DD.md using the same section
+      structure as build_report() in market_report.py.
+
+      Make it DETAILED and analytical, not a summary of summaries.
+      For every important item include:
+      - **מה קרה:** תיאור קצר וברור עם מספרים מדויקים (%, מחירים, יעדים)
+      - **למה זה חשוב:** ההשלכות על השוק
+      - **חברות/סקטורים מושפעים**
+      - **הזדמנות/סיכון:** מה ניתן לשקול (ללא המלצות קנייה/מכירה)
+      - **רמת ביטחון:** 🟢 גבוהה / 🟡 בינונית / 🔴 נמוכה
+      - **מקורות:** קישורים למקורות העיקריים
+      Be direct and practical; explain logic, data, risks and scenarios.
+      If information is missing or unclear — say so explicitly.
+   4. Run: python3 market_report.py send /tmp/market-report-YYYY-MM-DD.md
       (sends the plain-text Top 5 push notification and the HTML email)
    ```
 

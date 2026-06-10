@@ -6,6 +6,7 @@ Requires env vars: TAVILY_API_KEY, NTFY_TOPIC, RESEND_API_KEY, REPORT_EMAIL
 Usage:
   python3 market_report.py            # full run (English Tavily answers, legacy)
   python3 market_report.py collect    # run searches, save raw JSON to /tmp/market-data-YYYY-MM-DD.json
+  python3 market_report.py search "Q" # one ad-hoc deep search, prints full results (for follow-ups)
   python3 market_report.py send PATH  # send an existing Hebrew Markdown report (ntfy + email)
 
 The daily Routine should use collect → (Claude writes Hebrew report) → send,
@@ -24,7 +25,7 @@ TODAY       = date.today().strftime("%Y-%m-%d")
 REPORT_PATH = f"/tmp/market-report-{TODAY}.md"
 DATA_PATH   = f"/tmp/market-data-{TODAY}.json"
 
-TAVILY_KEY  = os.environ.get("TAVILY_API_KEY", "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")
+TAVILY_KEY  = os.environ.get("TAVILY_API_KEY", "")
 NTFY_TOPIC  = os.environ.get("NTFY_TOPIC", "market-report-eylon")
 RESEND_KEY  = os.environ.get("RESEND_API_KEY", "")
 EMAIL_TO    = os.environ.get("REPORT_EMAIL", "eylonbd6@gmail.com")
@@ -382,8 +383,13 @@ def cmd_collect():
             "query": q,
             "answer": res.get("answer", ""),
             "sources": [
-                {"title": r.get("title", ""), "url": r.get("url", "")}
-                for r in res.get("results", [])[:3]
+                {
+                    "title": r.get("title", ""),
+                    "url": r.get("url", ""),
+                    "published_date": r.get("published_date", ""),
+                    "content": r.get("content", ""),
+                }
+                for r in res.get("results", [])[:5]
             ],
         })
     with open(DATA_PATH, "w", encoding="utf-8") as f:
@@ -391,6 +397,22 @@ def cmd_collect():
     print(f"[collect] Raw search data saved → {DATA_PATH}")
     print(f"[collect] Next: write the Hebrew report to {REPORT_PATH}, "
           f"then run: python3 market_report.py send {REPORT_PATH}")
+
+
+def cmd_search(query: str):
+    """Ad-hoc deep search so Claude can follow up on stories found in collect."""
+    res = tavily_search(query)
+    out = []
+    if res.get("answer"):
+        out.append(f"Summary: {res['answer']}\n")
+    for r in res.get("results", [])[:5]:
+        out.append(
+            f"Title: {r.get('title', '')}\n"
+            f"URL: {r.get('url', '')}\n"
+            + (f"Date: {r['published_date']}\n" if r.get("published_date") else "")
+            + f"Content: {r.get('content', '')}\n"
+        )
+    print("\n---\n".join(out) if out else "No results.")
 
 
 def cmd_send(path: str):
@@ -419,6 +441,8 @@ def main():
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "collect":
         cmd_collect()
+    elif len(sys.argv) > 1 and sys.argv[1] == "search":
+        cmd_search(" ".join(sys.argv[2:]))
     elif len(sys.argv) > 1 and sys.argv[1] == "send":
         cmd_send(sys.argv[2] if len(sys.argv) > 2 else REPORT_PATH)
     else:
