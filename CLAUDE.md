@@ -13,16 +13,16 @@ Runs a daily Hebrew market intelligence report covering:
 
 ## How to run
 
+Recommended flow (fully Hebrew report):
+
 ```bash
-python3 market_report.py
+python3 market_report.py collect   # runs 12 Tavily searches, saves raw JSON to /tmp/market-data-YYYY-MM-DD.json
+# Claude reads the JSON and writes a fluent Hebrew report to /tmp/market-report-YYYY-MM-DD.md
+python3 market_report.py send /tmp/market-report-YYYY-MM-DD.md   # ntfy push (plain-text Top 5) + HTML email
 ```
 
-The script:
-1. Runs 12 Tavily searches
-2. Builds a Hebrew Markdown report
-3. Saves to `/tmp/market-report-YYYY-MM-DD.md`
-4. Sends a push notification via ntfy.sh (Top 5 section)
-5. Emails the full HTML report via Resend
+Legacy one-shot mode (`python3 market_report.py` with no args) still works,
+but the body text will contain Tavily's English answers.
 
 ## Required environment variables
 
@@ -53,7 +53,16 @@ In Claude Code on the web:
 5. Prompt:
    ```
    Run the daily market intelligence report:
-   python3 market_report.py
+   1. Run: python3 market_report.py collect
+      (saves raw search data to /tmp/market-data-YYYY-MM-DD.json)
+   2. Read the JSON and write the full report ENTIRELY IN HEBREW —
+      translate all English search answers into fluent, natural Hebrew,
+      no English sentences in the body. Save it to
+      /tmp/market-report-YYYY-MM-DD.md using the same section structure
+      as build_report() in market_report.py. Keep it readable: short
+      paragraphs, bullet points, numbers with % and currency.
+   3. Run: python3 market_report.py send /tmp/market-report-YYYY-MM-DD.md
+      (sends the plain-text Top 5 push notification and the HTML email)
    ```
 
 ## Getting a Resend API key (free email)

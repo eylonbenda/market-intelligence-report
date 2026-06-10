@@ -2,6 +2,14 @@
 """
 Daily market intelligence report — Hebrew
 Requires env vars: TAVILY_API_KEY, NTFY_TOPIC, RESEND_API_KEY, REPORT_EMAIL
+
+Usage:
+  python3 market_report.py            # full run (English Tavily answers, legacy)
+  python3 market_report.py collect    # run searches, save raw JSON to /tmp/market-data-YYYY-MM-DD.json
+  python3 market_report.py send PATH  # send an existing Hebrew Markdown report (ntfy + email)
+
+The daily Routine should use collect → (Claude writes Hebrew report) → send,
+so the final report is fully in Hebrew and readable.
 """
 
 import json
@@ -14,6 +22,7 @@ from datetime import date
 # ── Config ─────────────────────────────────────────────────────────────────
 TODAY       = date.today().strftime("%Y-%m-%d")
 REPORT_PATH = f"/tmp/market-report-{TODAY}.md"
+DATA_PATH   = f"/tmp/market-data-{TODAY}.json"
 
 TAVILY_KEY  = os.environ.get("TAVILY_API_KEY", "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")
 NTFY_TOPIC  = os.environ.get("NTFY_TOPIC", "market-report-eylon")
@@ -154,6 +163,38 @@ def md_to_html(md: str) -> str:
     <hr><p style='font-size:11px;color:#999'>דוח אוטומטי — {TODAY} | אין ייעוץ השקעות</p>
     </body></html>
     """
+
+
+def md_to_plain(md: str) -> str:
+    """Strip Markdown so the push notification is plain readable text."""
+    import re
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", md)   # links → text only
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)          # bold
+    text = re.sub(r"^#{1,6}\s*", "", text, flags=re.M)    # headers
+    text = re.sub(r"^[-*]\s+", "• ", text, flags=re.M)    # bullets
+    text = re.sub(r"^>\s*", "", text, flags=re.M)         # blockquotes
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def extract_top5(report: str) -> str:
+    marker = "## 🔥"
+    start = report.find(marker)
+    if start != -1:
+        after = report[report.find("\n", start) + 1:]
+        end = after.find("\n## ")
+        if end == -1:
+            end = after.find("\n---")
+        top5 = after[:end].strip() if end != -1 else after[:900].strip()
+    else:
+        top5 = report[:900]
+    return md_to_plain(top5)[:900]
+
+
+def send_report(report: str):
+    """Send push notification (plain-text Top 5) + full HTML email."""
+    send_ntfy(f"📊 דוח שוקי ההון — {TODAY}", extract_top5(report))
+    send_email(f"📊 דוח מודיעין שוקי ההון — {TODAY}", md_to_html(report))
 
 
 # ── Search queries ──────────────────────────────────────────────────────────
@@ -322,47 +363,62 @@ def build_report(results: list[dict]) -> str:
 
 # ── Main ────────────────────────────────────────────────────────────────────
 
-def main():
-    print(f"[market-report] Starting — {TODAY}")
-
-    # Step 1: Run all searches
-    print(f"[1/4] Running {len(QUERIES)} Tavily searches...")
+def run_searches() -> list[dict]:
+    print(f"[collect] Running {len(QUERIES)} Tavily searches...")
     results = []
     for i, q in enumerate(QUERIES, 1):
         print(f"  [{i:02d}/{len(QUERIES)}] {q[:60]}")
         results.append(tavily_search(q))
+    return results
 
-    # Step 2: Build report
-    print("[2/4] Building Hebrew report...")
+
+def cmd_collect():
+    """Run searches and save raw data for Claude to write the Hebrew report from."""
+    results = run_searches()
+    data = []
+    for q, res in zip(QUERIES, results):
+        data.append({
+            "query": q,
+            "answer": res.get("answer", ""),
+            "sources": [
+                {"title": r.get("title", ""), "url": r.get("url", "")}
+                for r in res.get("results", [])[:3]
+            ],
+        })
+    with open(DATA_PATH, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    print(f"[collect] Raw search data saved → {DATA_PATH}")
+    print(f"[collect] Next: write the Hebrew report to {REPORT_PATH}, "
+          f"then run: python3 market_report.py send {REPORT_PATH}")
+
+
+def cmd_send(path: str):
+    with open(path, encoding="utf-8") as f:
+        report = f.read()
+    print(f"[send] Sending report from {path}...")
+    send_report(report)
+    print("[send] Done")
+
+
+def main():
+    print(f"[market-report] Starting — {TODAY}")
+    results = run_searches()
+
+    print("[2/3] Building Hebrew report...")
     report = build_report(results)
-
-    # Step 3: Save to file
     with open(REPORT_PATH, "w", encoding="utf-8") as f:
         f.write(report)
-    print(f"[3/4] Report saved → {REPORT_PATH}")
+    print(f"[2/3] Report saved → {REPORT_PATH}")
 
-    # Step 4: Extract Top 5 for notification
-    marker = "## 🔥 5 הדברים החשובים ביותר לצפייה היום"
-    start  = report.find(marker)
-    if start != -1:
-        after = report[start + len(marker):]
-        end   = after.find("\n## ")
-        top5  = after[:end].strip() if end != -1 else after[:900].strip()
-    else:
-        top5 = report[:900]
-    top5 = top5[:900]
-
-    # Step 5a: ntfy.sh push notification
-    print("[4/4] Sending notifications...")
-    send_ntfy(f"📊 דוח שוקי ההון — {TODAY}", top5)
-
-    # Step 5b: Email full report via Resend
-    subject  = f"📊 דוח מודיעין שוקי ההון — {TODAY}"
-    html     = md_to_html(report)
-    send_email(subject, html)
-
+    print("[3/3] Sending notifications...")
+    send_report(report)
     print(f"[market-report] Done — {REPORT_PATH}")
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 1 and sys.argv[1] == "collect":
+        cmd_collect()
+    elif len(sys.argv) > 1 and sys.argv[1] == "send":
+        cmd_send(sys.argv[2] if len(sys.argv) > 2 else REPORT_PATH)
+    else:
+        main()
