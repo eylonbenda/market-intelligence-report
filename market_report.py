@@ -15,11 +15,17 @@ from datetime import date
 TODAY       = date.today().strftime("%Y-%m-%d")
 REPORT_PATH = f"/tmp/market-report-{TODAY}.md"
 
+DATA_PATH   = f"/tmp/market-data-{TODAY}.json"
+
 TAVILY_KEY  = os.environ.get("TAVILY_API_KEY", "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")
 NTFY_TOPIC  = os.environ.get("NTFY_TOPIC", "market-report-eylon")
 RESEND_KEY  = os.environ.get("RESEND_API_KEY", "")
 EMAIL_TO    = os.environ.get("REPORT_EMAIL", "eylonbd6@gmail.com")
-EMAIL_FROM  = os.environ.get("REPORT_EMAIL_FROM", "market@resend.dev")  # use your verified domain once set up
+EMAIL_FROM  = os.environ.get("REPORT_EMAIL_FROM", "onboarding@resend.dev")  # use your verified domain once set up
+
+# Resend/ntfy sit behind Cloudflare, which bot-blocks the default urllib
+# User-Agent (HTTP 403 "error code: 1010"). Send a browser-like UA.
+USER_AGENT  = "Mozilla/5.0 (market-report-bot)"
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -30,6 +36,7 @@ def tavily_search(query: str, max_results: int = 8) -> dict:
         "query": query,
         "search_depth": "advanced",
         "include_answer": True,
+        "include_raw_content": True,
         "max_results": max_results,
     }).encode()
     req = urllib.request.Request(
@@ -82,6 +89,7 @@ def send_email(subject: str, html_body: str) -> bool:
         headers={
             "Content-Type": "application/json",
             "Authorization": f"Bearer {RESEND_KEY}",
+            "User-Agent": USER_AGENT,
         },
     )
     try:
@@ -320,28 +328,45 @@ def build_report(results: list[dict]) -> str:
 """
 
 
-# ── Main ────────────────────────────────────────────────────────────────────
+# ── Sub-commands ─────────────────────────────────────────────────────────────
 
-def main():
-    print(f"[market-report] Starting — {TODAY}")
-
-    # Step 1: Run all searches
-    print(f"[1/4] Running {len(QUERIES)} Tavily searches...")
+def cmd_collect():
+    """Run all 12 searches and dump raw data (answers + full content) to JSON."""
+    print(f"[collect] Running {len(QUERIES)} Tavily searches — {TODAY}")
     results = []
     for i, q in enumerate(QUERIES, 1):
         print(f"  [{i:02d}/{len(QUERIES)}] {q[:60]}")
-        results.append(tavily_search(q))
+        results.append({"query": q, "data": tavily_search(q)})
+    with open(DATA_PATH, "w", encoding="utf-8") as f:
+        json.dump(results, f, ensure_ascii=False, indent=2)
+    print(f"[collect] Raw data saved → {DATA_PATH}")
 
-    # Step 2: Build report
-    print("[2/4] Building Hebrew report...")
-    report = build_report(results)
 
-    # Step 3: Save to file
-    with open(REPORT_PATH, "w", encoding="utf-8") as f:
-        f.write(report)
-    print(f"[3/4] Report saved → {REPORT_PATH}")
+def cmd_search(query: str):
+    """Run a single focused follow-up search and print the answer + sources."""
+    print(f"[search] {query}", file=sys.stderr)
+    data = tavily_search(query)
+    print(json.dumps({
+        "query": query,
+        "answer": data.get("answer", ""),
+        "results": [
+            {
+                "title": r.get("title", ""),
+                "url": r.get("url", ""),
+                "content": r.get("content", ""),
+                "raw_content": (r.get("raw_content") or "")[:4000],
+            }
+            for r in data.get("results", [])
+        ],
+    }, ensure_ascii=False, indent=2))
 
-    # Step 4: Extract Top 5 for notification
+
+def cmd_send(path: str):
+    """Read a finished Markdown report, push Top-5 via ntfy, email full HTML."""
+    with open(path, "r", encoding="utf-8") as f:
+        report = f.read()
+
+    # Extract the Top-5 section for the push notification.
     marker = "## 🔥 5 הדברים החשובים ביותר לצפייה היום"
     start  = report.find(marker)
     if start != -1:
@@ -352,11 +377,46 @@ def main():
         top5 = report[:900]
     top5 = top5[:900]
 
-    # Step 5a: ntfy.sh push notification
+    print(f"[send] Pushing notification + email for {path}")
+    send_ntfy(f"📊 דוח שוקי ההון — {TODAY}", top5)
+
+    subject = f"📊 דוח מודיעין שוקי ההון — {TODAY}"
+    html    = md_to_html(report)
+    send_email(subject, html)
+    print("[send] Done")
+
+
+# ── Main (legacy all-in-one pipeline) ────────────────────────────────────────
+
+def main():
+    print(f"[market-report] Starting — {TODAY}")
+
+    print(f"[1/4] Running {len(QUERIES)} Tavily searches...")
+    results = []
+    for i, q in enumerate(QUERIES, 1):
+        print(f"  [{i:02d}/{len(QUERIES)}] {q[:60]}")
+        results.append(tavily_search(q))
+
+    print("[2/4] Building Hebrew report...")
+    report = build_report(results)
+
+    with open(REPORT_PATH, "w", encoding="utf-8") as f:
+        f.write(report)
+    print(f"[3/4] Report saved → {REPORT_PATH}")
+
+    marker = "## 🔥 5 הדברים החשובים ביותר לצפייה היום"
+    start  = report.find(marker)
+    if start != -1:
+        after = report[start + len(marker):]
+        end   = after.find("\n## ")
+        top5  = after[:end].strip() if end != -1 else after[:900].strip()
+    else:
+        top5 = report[:900]
+    top5 = top5[:900]
+
     print("[4/4] Sending notifications...")
     send_ntfy(f"📊 דוח שוקי ההון — {TODAY}", top5)
 
-    # Step 5b: Email full report via Resend
     subject  = f"📊 דוח מודיעין שוקי ההון — {TODAY}"
     html     = md_to_html(report)
     send_email(subject, html)
@@ -365,4 +425,18 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    cmd = sys.argv[1] if len(sys.argv) > 1 else None
+    if cmd == "collect":
+        cmd_collect()
+    elif cmd == "search":
+        if len(sys.argv) < 3:
+            print("usage: market_report.py search \"<query>\"", file=sys.stderr)
+            sys.exit(1)
+        cmd_search(sys.argv[2])
+    elif cmd == "send":
+        if len(sys.argv) < 3:
+            print("usage: market_report.py send <report.md>", file=sys.stderr)
+            sys.exit(1)
+        cmd_send(sys.argv[2])
+    else:
+        main()
